@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.title("Dunelm Weekly Report Report Mapper")
+st.title("Dunelm Weekly Report Mapper")
 
 st.write("""
           1. Export the previous 2 weeks worth of data
