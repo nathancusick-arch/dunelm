@@ -6,7 +6,7 @@ st.title("Dunelm Weekly Report Mapper")
 
 st.write("""
           1. Export the previous 2 weeks worth of data
-          2. Drop the file in the below box, it should then give you the output file in your downloads
+          2. Drop the file in the below box, it should then give you the output files in your downloads
           3. Standard bits - Check data vs previous week, remove data already reported, paste over new data
           4. Copy and paste over values etc!!!
           5. Done.
@@ -59,7 +59,6 @@ if csv_file is not None:
         "Extra Site 4": None,
     }
 
-    # Output columns derive directly from mapping keys
     OUTPUT_COLUMNS = list(COLUMN_MAP.keys())
 
     # ============================================================
@@ -77,19 +76,37 @@ if csv_file is not None:
         final_df[col] = df.apply(lambda r: map_value(r, COLUMN_MAP[col]), axis=1)
 
     # ============================================================
-    # PREVIEW & DOWNLOAD
+    # SPLIT OUTPUT
     # ============================================================
 
-    st.subheader("Preview of Output")
-    st.write(final_df)
+    allergens_df = final_df[final_df["Item to order"] == "Allergens"].copy()
+    standard_df = final_df[final_df["Item to order"] != "Allergens"].copy()
 
-    output_buffer = io.BytesIO()
-    final_df.to_csv(output_buffer, index=False, encoding="utf-8-sig")
-    output_buffer.seek(0)
+    # ============================================================
+    # DOWNLOAD FILES
+    # ============================================================
+
+    allergens_buffer = io.BytesIO()
+    standard_buffer = io.BytesIO()
+
+    allergens_df.to_csv(allergens_buffer, index=False, encoding="utf-8-sig")
+    standard_df.to_csv(standard_buffer, index=False, encoding="utf-8-sig")
+
+    allergens_buffer.seek(0)
+    standard_buffer.seek(0)
+
+    st.success("Files processed!")
 
     st.download_button(
-        label="Download Dunelm Weekly Report CSV",
-        data=output_buffer,
-        file_name="Dunelm Report Data.csv",
+        label="Download Dunelm Allergens Report CSV",
+        data=allergens_buffer,
+        file_name="Dunelm Allergens Report Data.csv",
+        mime="text/csv"
+    )
+
+    st.download_button(
+        label="Download Dunelm Standard Report CSV",
+        data=standard_buffer,
+        file_name="Dunelm Standard Report Data.csv",
         mime="text/csv"
     )
