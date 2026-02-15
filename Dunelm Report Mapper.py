@@ -79,34 +79,34 @@ if csv_file is not None:
     # SPLIT OUTPUT
     # ============================================================
 
-    allergens_df = final_df[final_df["Item to order"] == "Allergens"].copy()
     standard_df = final_df[final_df["Item to order"] != "Allergens"].copy()
+    allergens_df = final_df[final_df["Item to order"] == "Allergens"].copy()
 
     # ============================================================
     # DOWNLOAD FILES
     # ============================================================
 
-    allergens_buffer = io.BytesIO()
     standard_buffer = io.BytesIO()
+    allergens_buffer = io.BytesIO()
 
-    allergens_df.to_csv(allergens_buffer, index=False, encoding="utf-8-sig")
     standard_df.to_csv(standard_buffer, index=False, encoding="utf-8-sig")
+    allergens_df.to_csv(allergens_buffer, index=False, encoding="utf-8-sig")
 
-    allergens_buffer.seek(0)
     standard_buffer.seek(0)
+    allergens_buffer.seek(0)
 
     st.success("Files processed!")
-
-    st.download_button(
-        label="Download Dunelm Allergens Report CSV",
-        data=allergens_buffer,
-        file_name="Dunelm Allergens Report Data.csv",
-        mime="text/csv"
-    )
 
     st.download_button(
         label="Download Dunelm Standard Report CSV",
         data=standard_buffer,
         file_name="Dunelm Standard Report Data.csv",
+        mime="text/csv"
+    )
+
+    st.download_button(
+        label="Download Dunelm Allergens Report CSV",
+        data=allergens_buffer,
+        file_name="Dunelm Allergens Report Data.csv",
         mime="text/csv"
     )
