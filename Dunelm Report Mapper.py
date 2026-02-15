@@ -98,9 +98,9 @@ if csv_file is not None:
     st.success("Files processed!")
 
     st.download_button(
-        label="Download Dunelm Standard Report CSV",
+        label="Download Dunelm AV Report CSV",
         data=standard_buffer,
-        file_name="Dunelm Standard Report Data.csv",
+        file_name="Dunelm AV Report Data.csv",
         mime="text/csv"
     )
 
