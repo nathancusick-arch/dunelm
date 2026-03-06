@@ -79,8 +79,8 @@ if csv_file is not None:
     # SPLIT OUTPUT
     # ============================================================
 
-    standard_df = final_df[final_df["Item to order"] != "Allergens"].copy()
-    allergens_df = final_df[final_df["Item to order"] == "Allergens"].copy()
+    standard_df = final_df[~final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
+    allergens_df = final_df[final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
 
     # ============================================================
     # DOWNLOAD FILES
