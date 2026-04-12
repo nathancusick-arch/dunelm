@@ -1,70 +1,60 @@
 import streamlit as st
 import pandas as pd
+from openpyxl import load_workbook
+from copy import copy
 import io
+from datetime import datetime
 
-st.title("Dunelm Weekly Report Mapper")
+st.title("Dunelm Report Generator")
 
 st.write("""
-          1. Export the previous 2 weeks worth of data
-          2. Drop the file in the below box, it should then give you the output files in your downloads
-          3. Standard bits - Check data vs previous week, remove data already reported, paste over new data
-          4. Copy and paste over values etc!!!
-          5. Done.
-          """)
+Upload:
+1. Latest audits export
+2. Last week's LIVE report
 
-# ============================================================
-# FILE UPLOADER
-# ============================================================
+The tool will generate:
+- This week's LIVE report
+- This week's completed report
+""")
 
 csv_file = st.file_uploader("Upload audits_basic_data_export.csv", type=["csv"])
+live_file = st.file_uploader("Upload last week's LIVE report", type=["xlsx"])
 
 # ============================================================
-# PROCESS ONLY WHEN CSV IS UPLOADED
+# COLUMN MAPPING (UNCHANGED)
 # ============================================================
 
-if csv_file is not None:
+COLUMN_MAP = {
+    "Order": "order_internal_id",
+    "Client": "client_name",
+    "Visit": "internal_id",
+    "Site": "site_internal_id",
+    "Order Deadline": "responsibility",
+    "Responsibility": "site_name",
+    "Premises Name": "site_address_1",
+    "Address1": "site_address_2",
+    "Address2": "site_address_3",
+    "Address3": None,
+    "City": None,
+    "Post Code": "site_post_code",
+    "Submitted Date": "submitted_date",
+    "Approved Date": "approval_date",
+    "Item to order": "item_to_order",
+    "Actual Visit Date": "date_of_visit",
+    "Actual Visit Time": "time_of_visit",
+    "AM / PM": None,
+    "Pass-Fail": "primary_result",
+    "Pass-Fail2": "secondary_result",
+    "Abort Reason": "Please detail why you were unable to conduct this audit:",
+    "Extra Site 1": "site_code",
+    "Extra Site 2": None,
+    "Extra Site 3": None,
+    "Extra Site 4": None,
+}
 
-    # Load export
-    df = pd.read_csv(csv_file, dtype=str).fillna("")
+OUTPUT_COLUMNS = list(COLUMN_MAP.keys())
 
-    # ============================================================
-    # COLUMN MAPPING
-    # ============================================================
-
-    COLUMN_MAP = {
-        "Order": "order_internal_id",
-        "Client": "client_name",
-        "Visit": "internal_id",
-        "Site": "site_internal_id",
-        "Order Deadline": "responsibility",
-        "Responsibility": "site_name",
-        "Premises Name": "site_address_1",
-        "Address1": "site_address_2",
-        "Address2": "site_address_3",
-        "Address3": None,
-        "City": None,
-        "Post Code": "site_post_code",
-        "Submitted Date": "submitted_date",
-        "Approved Date": "approval_date",
-        "Item to order": "item_to_order",
-        "Actual Visit Date": "date_of_visit",
-        "Actual Visit Time": "time_of_visit",
-        "AM / PM": None,
-        "Pass-Fail": "primary_result",
-        "Pass-Fail2": "secondary_result",
-        "Abort Reason": "Please detail why you were unable to conduct this audit:",
-        "Extra Site 1": "site_code",
-        "Extra Site 2": None,
-        "Extra Site 3": None,
-        "Extra Site 4": None,
-    }
-
-    OUTPUT_COLUMNS = list(COLUMN_MAP.keys())
-
-    # ============================================================
-    # APPLY MAPPING
-    # ============================================================
-
+def map_data(df):
     def map_value(row, mapping):
         if mapping is None:
             return ""
@@ -75,38 +65,169 @@ if csv_file is not None:
     for col in OUTPUT_COLUMNS:
         final_df[col] = df.apply(lambda r: map_value(r, COLUMN_MAP[col]), axis=1)
 
-    # ============================================================
-    # SPLIT OUTPUT
-    # ============================================================
+    av = final_df[~final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
+    narv = final_df[final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
 
-    standard_df = final_df[~final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
-    allergens_df = final_df[final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
+    return av, narv
 
-    # ============================================================
-    # DOWNLOAD FILES
-    # ============================================================
 
-    standard_buffer = io.BytesIO()
-    allergens_buffer = io.BytesIO()
+# ============================================================
+# MAIN PROCESS
+# ============================================================
 
-    standard_df.to_csv(standard_buffer, index=False, encoding="utf-8-sig")
-    allergens_df.to_csv(allergens_buffer, index=False, encoding="utf-8-sig")
+if csv_file and live_file:
 
-    standard_buffer.seek(0)
-    allergens_buffer.seek(0)
+    if st.button("Generate This Week's Reports"):
 
-    st.success("Files processed!")
+        # Load export
+        df = pd.read_csv(csv_file, dtype=str).fillna("")
+        av_df, narv_df = map_data(df)
 
-    st.download_button(
-        label="Download Dunelm AV Report CSV",
-        data=standard_buffer,
-        file_name="Dunelm AV Report Data.csv",
-        mime="text/csv"
-    )
+        # Load workbook
+        wb = load_workbook(live_file)
+        
+        weekly_ws = wb["Weekly"]
+        narv_weekly_ws = wb["NARV Weekly"]
+        ytd_ws = wb["YTD"]
+        narv_ytd_ws = wb["NARV YTD"]
 
-    st.download_button(
-        label="Download Dunelm Allergens Report CSV",
-        data=allergens_buffer,
-        file_name="Dunelm Allergens Report Data.csv",
-        mime="text/csv"
-    )
+        # ============================================================
+        # GET EXISTING VISITS
+        # ============================================================
+
+        def get_existing_visits(ws):
+            visits = set()
+            for row in ws.iter_rows(min_row=4, max_col=3):
+                val = row[2].value
+                if val:
+                    visits.add(str(val))
+            return visits
+
+        existing_visits = get_existing_visits(weekly_ws) | get_existing_visits(narv_weekly_ws)
+
+        # Deduplicate
+        av_df = av_df[~av_df["Visit"].isin(existing_visits)]
+        narv_df = narv_df[~narv_df["Visit"].isin(existing_visits)]
+
+        # ============================================================
+        # YEAR CHECK
+        # ============================================================
+
+        def get_year_from_ws(ws):
+            for row in ws.iter_rows(min_row=4, max_col=16):
+                val = row[15].value
+                if val:
+                    return pd.to_datetime(val).year
+            return None
+
+        new_year = None
+        if not av_df.empty:
+            new_year = pd.to_datetime(av_df["Actual Visit Date"]).min().year
+
+        existing_year = get_year_from_ws(ytd_ws)
+
+        reset_ytd = new_year and existing_year and new_year > existing_year
+
+        # ============================================================
+        # WRITE DATA
+        # ============================================================
+
+        def write_df(ws, df):
+            # clear existing
+            for row in ws.iter_rows(min_row=4, max_col=25):
+                for cell in row:
+                    cell.value = None
+
+            # write new
+            for r_idx, row in enumerate(df.values, start=4):
+                for c_idx, val in enumerate(row, start=1):
+                    ws.cell(row=r_idx, column=c_idx, value=val)
+
+        write_df(weekly_ws, av_df)
+        write_df(narv_weekly_ws, narv_df)
+
+        # Append or reset YTD
+        def append_df(ws, df, reset):
+            if reset:
+                start_row = 4
+                for row in ws.iter_rows(min_row=4):
+                    for cell in row:
+                        cell.value = None
+            else:
+                start_row = ws.max_row + 1
+
+            for r_idx, row in enumerate(df.values, start=start_row):
+                for c_idx, val in enumerate(row, start=1):
+                    ws.cell(row=r_idx, column=c_idx, value=val)
+
+        append_df(ytd_ws, av_df, reset_ytd)
+        append_df(narv_ytd_ws, narv_df, reset_ytd)
+
+        # ============================================================
+        # EXTEND FORMULAS (AA:AB)
+        # ============================================================
+
+        def extend_formulas(ws):
+            max_row = ws.max_row
+            for col in [27, 28]:
+                base_formula = ws.cell(row=4, column=col).value
+                for r in range(5, max_row + 1):
+                    ws.cell(row=r, column=col, value=base_formula.replace("4", str(r)))
+
+        for ws in [weekly_ws, ytd_ws, narv_weekly_ws, narv_ytd_ws]:
+            extend_formulas(ws)
+
+        # ============================================================
+        # SAVE LIVE
+        # ============================================================
+
+        today = datetime.today().strftime("%d.%m.%Y")
+
+        live_buffer = io.BytesIO()
+        wb.save(live_buffer)
+        live_buffer.seek(0)
+
+        # ============================================================
+        # CREATE COMPLETED REPORT
+        # ============================================================
+
+        wb_completed = load_workbook(live_buffer)
+
+        keep_tabs = [
+            "Weekly Summary Table",
+            "Performance by Area",
+            "Allergens Weekly Summary Table",
+            "Allergens Performance by Area",
+        ]
+
+        for sheet in wb_completed.sheetnames:
+            if sheet not in keep_tabs:
+                del wb_completed[sheet]
+
+        # Convert to values
+        for ws in wb_completed.worksheets:
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.value = cell.value
+
+        completed_buffer = io.BytesIO()
+        wb_completed.save(completed_buffer)
+        completed_buffer.seek(0)
+
+        # ============================================================
+        # DOWNLOADS
+        # ============================================================
+
+        st.success("Reports generated!")
+
+        st.download_button(
+            "Download LIVE Report",
+            live_buffer,
+            file_name=f"Weekly Report format - {today} LIVE.xlsx"
+        )
+
+        st.download_button(
+            "Download Completed Report",
+            completed_buffer,
+            file_name=f"Weekly Report format - {today}.xlsx"
+        )
