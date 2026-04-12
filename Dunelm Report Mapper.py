@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from openpyxl.formula.translate import Translator
 from openpyxl.cell.cell import MergedCell
 import io
@@ -12,7 +12,7 @@ csv_file = st.file_uploader("Upload audits_basic_data_export.csv", type=["csv"])
 live_file = st.file_uploader("Upload last week's LIVE report", type=["xlsx"])
 
 # ============================================================
-# COLUMN MAPPING
+# MAPPING
 # ============================================================
 
 COLUMN_MAP = {
@@ -49,18 +49,18 @@ def map_data(df):
     def map_value(row, mapping):
         if mapping is None:
             return ""
-        return str(row.get(mapping, "")).strip()
+        return row.get(mapping, "")
 
     final_df = pd.DataFrame(columns=OUTPUT_COLUMNS)
 
     for col in OUTPUT_COLUMNS:
         final_df[col] = df.apply(lambda r: map_value(r, COLUMN_MAP[col]), axis=1)
 
-    # ================= TYPE FIXES =================
+    # TYPE FIXES
     final_df["Actual Visit Date"] = pd.to_datetime(final_df["Actual Visit Date"], errors="coerce")
-    final_df["Actual Visit Time"] = pd.to_datetime(final_df["Actual Visit Time"], errors="coerce").dt.time
     final_df["Submitted Date"] = pd.to_datetime(final_df["Submitted Date"], errors="coerce")
     final_df["Approved Date"] = pd.to_datetime(final_df["Approved Date"], errors="coerce")
+    final_df["Actual Visit Time"] = pd.to_datetime(final_df["Actual Visit Time"], errors="coerce").dt.time
     final_df["Extra Site 1"] = pd.to_numeric(final_df["Extra Site 1"], errors="coerce")
 
     av = final_df[~final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
@@ -70,7 +70,7 @@ def map_data(df):
 
 
 # ============================================================
-# MAIN PROCESS
+# MAIN
 # ============================================================
 
 if csv_file and live_file:
@@ -82,118 +82,99 @@ if csv_file and live_file:
 
     wb = load_workbook(live_file)
 
-    weekly_ws = wb["Weekly"]
-    narv_weekly_ws = wb["NARV Weekly"]
-    ytd_ws = wb["YTD"]
-    narv_ytd_ws = wb["NARV YTD"]
+    weekly = wb["Weekly"]
+    narv_weekly = wb["NARV Weekly"]
+    ytd = wb["YTD"]
+    narv_ytd = wb["NARV YTD"]
 
     # ============================================================
-    # GET EXISTING VISITS
+    # DEDUPE
     # ============================================================
 
-    def get_existing_visits(ws):
-        visits = set()
-        for row in ws.iter_rows(min_row=4, max_col=3):
-            if row[2].value:
-                visits.add(str(row[2].value))
-        return visits
+    def get_ids(ws):
+        return {
+            str(r[2].value)
+            for r in ws.iter_rows(min_row=4, max_col=3)
+            if r[2].value
+        }
 
-    existing_visits = get_existing_visits(weekly_ws) | get_existing_visits(narv_weekly_ws)
+    existing = get_ids(weekly) | get_ids(narv_weekly)
 
-    av_df = av_df[~av_df["Visit"].isin(existing_visits)]
-    narv_df = narv_df[~narv_df["Visit"].isin(existing_visits)]
-
-    # ============================================================
-    # YEAR CHECK
-    # ============================================================
-
-    def get_year(ws):
-        for row in ws.iter_rows(min_row=4, max_col=16):
-            if row[15].value:
-                return pd.to_datetime(row[15].value).year
-        return None
-
-    new_year = pd.to_datetime(av_df["Actual Visit Date"]).min().year if not av_df.empty else None
-    existing_year = get_year(ytd_ws)
-    reset_ytd = new_year and existing_year and new_year > existing_year
+    av_df = av_df[~av_df["Visit"].isin(existing)]
+    narv_df = narv_df[~narv_df["Visit"].isin(existing)]
 
     # ============================================================
-    # WRITE DATA
+    # WRITE WITH FORMATTING
     # ============================================================
 
-    def clear_data(ws):
-        for row in ws.iter_rows(min_row=4, max_col=30):
+    def write(ws, df):
+        # clear ONLY A:Y
+        for row in ws.iter_rows(min_row=4, max_col=25):
             for cell in row:
                 if not isinstance(cell, MergedCell):
                     cell.value = None
 
-    def write_df(ws, df):
-        clear_data(ws)
-        for r, row in enumerate(df.values, start=4):
+        for r, row in enumerate(df.itertuples(index=False), start=4):
             for c, val in enumerate(row, start=1):
-                ws.cell(row=r, column=c, value=val)
+                cell = ws.cell(r, c, val)
 
-    write_df(weekly_ws, av_df)
-    write_df(narv_weekly_ws, narv_df)
+                # Date columns
+                if c in [12, 13, 16] and pd.notna(val):
+                    cell.number_format = "DD/MM/YYYY"
 
-    def append_df(ws, df, reset):
-        if reset:
-            clear_data(ws)
-            start = 4
-        else:
-            start = ws.max_row + 1
+                # Time column
+                if c == 17 and pd.notna(val):
+                    cell.number_format = "HH:MM"
 
-        for r, row in enumerate(df.values, start=start):
-            for c, val in enumerate(row, start=1):
-                ws.cell(row=r, column=c, value=val)
-
-    append_df(ytd_ws, av_df, reset_ytd)
-    append_df(narv_ytd_ws, narv_df, reset_ytd)
+    write(weekly, av_df)
+    write(narv_weekly, narv_df)
 
     # ============================================================
-    # FORMULAS (AA:AB) WITH CLEARING
+    # FORMULAS (SAFE)
     # ============================================================
 
-    def extend_formulas(ws):
+    def fill_formulas(ws):
         max_row = ws.max_row
 
         for col in [27, 28]:
             col_letter = ws.cell(row=4, column=col).column_letter
             base = ws[f"{col_letter}4"].value
 
-            # clear column first
-            for r in range(5, ws.max_row + 50):
-                ws[f"{col_letter}{r}"] = None
-
             for r in range(5, max_row + 1):
                 ws[f"{col_letter}{r}"] = Translator(base, origin=f"{col_letter}4").translate_formula(f"{col_letter}{r}")
 
-    for ws in [weekly_ws, ytd_ws, narv_weekly_ws, narv_ytd_ws]:
-        extend_formulas(ws)
+    for ws in [weekly, narv_weekly, ytd, narv_ytd]:
+        fill_formulas(ws)
 
     # ============================================================
-    # SUMMARY TABLE RESIZE
+    # SUMMARY TABLES (FIXED)
     # ============================================================
 
-    def resize_summary(ws, start_row, data_length):
-        formula_row = start_row + 1
+    def rebuild_summary(ws, start_row, count):
+        base_row = start_row + 1
 
-        for r in range(formula_row, formula_row + 1000):
-            for c in range(1, 50):
-                ws.cell(row=r, column=c).value = None
+        base_formulas = [
+            ws.cell(row=base_row, column=c).value
+            for c in range(1, ws.max_column + 1)
+        ]
 
-        for i in range(data_length):
-            for c in range(1, 50):
-                base = ws.cell(row=formula_row, column=c).value
-                if base:
+        # clear
+        for r in range(base_row, base_row + 1000):
+            for c in range(1, ws.max_column + 1):
+                ws.cell(r, c).value = None
+
+        # rebuild
+        for i in range(count):
+            for c, formula in enumerate(base_formulas, start=1):
+                if formula:
                     ws.cell(
-                        row=formula_row + i,
+                        row=base_row + i,
                         column=c,
-                        value=Translator(base, origin=f"A{formula_row}").translate_formula(f"A{formula_row+i}")
+                        value=Translator(formula, origin=f"A{base_row}").translate_formula(f"A{base_row+i}")
                     )
 
-    resize_summary(wb["Weekly Summary Table"], 21, len(av_df))
-    resize_summary(wb["Allergens Weekly Summary Table"], 16, len(narv_df))
+    rebuild_summary(wb["Weekly Summary Table"], 21, len(av_df))
+    rebuild_summary(wb["Allergens Weekly Summary Table"], 16, len(narv_df))
 
     # ============================================================
     # SAVE LIVE
@@ -206,11 +187,11 @@ if csv_file and live_file:
     live_buffer.seek(0)
 
     # ============================================================
-    # COMPLETED REPORT (TRUE VALUES)
+    # COMPLETED REPORT (NEW WORKBOOK APPROACH)
     # ============================================================
 
     wb_values = load_workbook(live_buffer, data_only=True)
-    wb_completed = load_workbook(live_buffer)
+    wb_completed = Workbook()
 
     keep = [
         "Weekly Summary Table",
@@ -219,18 +200,16 @@ if csv_file and live_file:
         "Allergens Performance by Area"
     ]
 
-    for sheet in list(wb_completed.sheetnames):
-        if sheet not in keep:
-            del wb_completed[sheet]
+    for name in keep:
+        src = wb_values[name]
+        dest = wb_completed.create_sheet(title=name)
 
-    for ws in wb_completed.worksheets:
-        ws_val = wb_values[ws.title]
+        for r in range(1, src.max_row + 1):
+            for c in range(1, src.max_column + 1):
+                dest.cell(r, c, src.cell(r, c).value)
 
-        for r in range(1, ws.max_row + 1):
-            for c in range(1, ws.max_column + 1):
-                cell = ws.cell(r, c)
-                if not isinstance(cell, MergedCell):
-                    cell.value = ws_val.cell(r, c).value
+    # remove default sheet
+    del wb_completed["Sheet"]
 
     completed_buffer = io.BytesIO()
     wb_completed.save(completed_buffer)
