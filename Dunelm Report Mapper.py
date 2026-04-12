@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
-from copy import copy
+from openpyxl.formula.translate import Translator
+from openpyxl.cell.cell import MergedCell
 import io
 from datetime import datetime
 
@@ -12,7 +13,7 @@ Upload:
 1. Latest audits export
 2. Last week's LIVE report
 
-The tool will generate:
+The tool will automatically generate:
 - This week's LIVE report
 - This week's completed report
 """)
@@ -21,7 +22,7 @@ csv_file = st.file_uploader("Upload audits_basic_data_export.csv", type=["csv"])
 live_file = st.file_uploader("Upload last week's LIVE report", type=["xlsx"])
 
 # ============================================================
-# COLUMN MAPPING (UNCHANGED)
+# COLUMN MAPPING
 # ============================================================
 
 COLUMN_MAP = {
@@ -72,162 +73,174 @@ def map_data(df):
 
 
 # ============================================================
-# MAIN PROCESS
+# MAIN PROCESS (AUTO RUN)
 # ============================================================
 
 if csv_file and live_file:
 
-    if st.button("Generate This Week's Reports"):
+    st.info("Processing... please wait")
 
-        # Load export
-        df = pd.read_csv(csv_file, dtype=str).fillna("")
-        av_df, narv_df = map_data(df)
+    # Load export
+    df = pd.read_csv(csv_file, dtype=str).fillna("")
+    av_df, narv_df = map_data(df)
 
-        # Load workbook
-        wb = load_workbook(live_file)
-        
-        weekly_ws = wb["Weekly"]
-        narv_weekly_ws = wb["NARV Weekly"]
-        ytd_ws = wb["YTD"]
-        narv_ytd_ws = wb["NARV YTD"]
+    # Load workbook
+    wb = load_workbook(live_file)
 
-        # ============================================================
-        # GET EXISTING VISITS
-        # ============================================================
+    weekly_ws = wb["Weekly"]
+    narv_weekly_ws = wb["NARV Weekly"]
+    ytd_ws = wb["YTD"]
+    narv_ytd_ws = wb["NARV YTD"]
 
-        def get_existing_visits(ws):
-            visits = set()
-            for row in ws.iter_rows(min_row=4, max_col=3):
-                val = row[2].value
-                if val:
-                    visits.add(str(val))
-            return visits
+    # ============================================================
+    # GET EXISTING VISITS
+    # ============================================================
 
-        existing_visits = get_existing_visits(weekly_ws) | get_existing_visits(narv_weekly_ws)
+    def get_existing_visits(ws):
+        visits = set()
+        for row in ws.iter_rows(min_row=4, max_col=3):
+            val = row[2].value
+            if val:
+                visits.add(str(val))
+        return visits
 
-        # Deduplicate
-        av_df = av_df[~av_df["Visit"].isin(existing_visits)]
-        narv_df = narv_df[~narv_df["Visit"].isin(existing_visits)]
+    existing_visits = get_existing_visits(weekly_ws) | get_existing_visits(narv_weekly_ws)
 
-        # ============================================================
-        # YEAR CHECK
-        # ============================================================
+    # Deduplicate
+    av_df = av_df[~av_df["Visit"].isin(existing_visits)]
+    narv_df = narv_df[~narv_df["Visit"].isin(existing_visits)]
 
-        def get_year_from_ws(ws):
-            for row in ws.iter_rows(min_row=4, max_col=16):
-                val = row[15].value
-                if val:
-                    return pd.to_datetime(val).year
-            return None
+    # ============================================================
+    # YEAR CHECK
+    # ============================================================
 
-        new_year = None
-        if not av_df.empty:
-            new_year = pd.to_datetime(av_df["Actual Visit Date"]).min().year
+    def get_year_from_ws(ws):
+        for row in ws.iter_rows(min_row=4, max_col=16):
+            val = row[15].value
+            if val:
+                return pd.to_datetime(val).year
+        return None
 
-        existing_year = get_year_from_ws(ytd_ws)
+    new_year = None
+    if not av_df.empty:
+        new_year = pd.to_datetime(av_df["Actual Visit Date"]).min().year
 
-        reset_ytd = new_year and existing_year and new_year > existing_year
+    existing_year = get_year_from_ws(ytd_ws)
 
-        # ============================================================
-        # WRITE DATA
-        # ============================================================
+    reset_ytd = new_year and existing_year and new_year > existing_year
 
-        def write_df(ws, df):
-            # clear existing
-            for row in ws.iter_rows(min_row=4, max_col=25):
-                for cell in row:
+    # ============================================================
+    # WRITE DATA
+    # ============================================================
+
+    def clear_data(ws):
+        for row in ws.iter_rows(min_row=4, max_col=25):
+            for cell in row:
+                if not isinstance(cell, MergedCell):
                     cell.value = None
 
-            # write new
-            for r_idx, row in enumerate(df.values, start=4):
-                for c_idx, val in enumerate(row, start=1):
-                    ws.cell(row=r_idx, column=c_idx, value=val)
+    def write_df(ws, df):
+        clear_data(ws)
+        for r_idx, row in enumerate(df.values, start=4):
+            for c_idx, val in enumerate(row, start=1):
+                ws.cell(row=r_idx, column=c_idx, value=val)
 
-        write_df(weekly_ws, av_df)
-        write_df(narv_weekly_ws, narv_df)
+    write_df(weekly_ws, av_df)
+    write_df(narv_weekly_ws, narv_df)
 
-        # Append or reset YTD
-        def append_df(ws, df, reset):
-            if reset:
-                start_row = 4
-                for row in ws.iter_rows(min_row=4):
-                    for cell in row:
-                        cell.value = None
-            else:
-                start_row = ws.max_row + 1
+    # ============================================================
+    # YTD HANDLING
+    # ============================================================
 
-            for r_idx, row in enumerate(df.values, start=start_row):
-                for c_idx, val in enumerate(row, start=1):
-                    ws.cell(row=r_idx, column=c_idx, value=val)
+    def append_df(ws, df, reset):
+        if reset:
+            clear_data(ws)
+            start_row = 4
+        else:
+            start_row = ws.max_row + 1
 
-        append_df(ytd_ws, av_df, reset_ytd)
-        append_df(narv_ytd_ws, narv_df, reset_ytd)
+        for r_idx, row in enumerate(df.values, start=start_row):
+            for c_idx, val in enumerate(row, start=1):
+                ws.cell(row=r_idx, column=c_idx, value=val)
 
-        # ============================================================
-        # EXTEND FORMULAS (AA:AB)
-        # ============================================================
+    append_df(ytd_ws, av_df, reset_ytd)
+    append_df(narv_ytd_ws, narv_df, reset_ytd)
 
-        def extend_formulas(ws):
-            max_row = ws.max_row
-            for col in [27, 28]:
-                base_formula = ws.cell(row=4, column=col).value
-                for r in range(5, max_row + 1):
-                    ws.cell(row=r, column=col, value=base_formula.replace("4", str(r)))
+    # ============================================================
+    # EXTEND FORMULAS (AA:AB) - TRUE EXCEL LOGIC
+    # ============================================================
 
-        for ws in [weekly_ws, ytd_ws, narv_weekly_ws, narv_ytd_ws]:
-            extend_formulas(ws)
+    def extend_formulas(ws):
+        max_row = ws.max_row
 
-        # ============================================================
-        # SAVE LIVE
-        # ============================================================
+        for col in [27, 28]:  # AA, AB
+            col_letter = ws.cell(row=4, column=col).column_letter
+            base_cell = f"{col_letter}4"
+            base_formula = ws[base_cell].value
 
-        today = datetime.today().strftime("%d.%m.%Y")
+            if not base_formula:
+                continue
 
-        live_buffer = io.BytesIO()
-        wb.save(live_buffer)
-        live_buffer.seek(0)
+            for r in range(5, max_row + 1):
+                target_cell = f"{col_letter}{r}"
+                translated = Translator(base_formula, origin=base_cell).translate_formula(target_cell)
+                ws[target_cell] = translated
 
-        # ============================================================
-        # CREATE COMPLETED REPORT
-        # ============================================================
+    for ws in [weekly_ws, ytd_ws, narv_weekly_ws, narv_ytd_ws]:
+        extend_formulas(ws)
 
-        wb_completed = load_workbook(live_buffer)
+    # ============================================================
+    # SAVE LIVE REPORT
+    # ============================================================
 
-        keep_tabs = [
-            "Weekly Summary Table",
-            "Performance by Area",
-            "Allergens Weekly Summary Table",
-            "Allergens Performance by Area",
-        ]
+    today = datetime.today().strftime("%d.%m.%Y")
 
-        for sheet in wb_completed.sheetnames:
-            if sheet not in keep_tabs:
-                del wb_completed[sheet]
+    live_buffer = io.BytesIO()
+    wb.save(live_buffer)
+    live_buffer.seek(0)
 
-        # Convert to values
-        for ws in wb_completed.worksheets:
-            for row in ws.iter_rows():
-                for cell in row:
+    # ============================================================
+    # CREATE COMPLETED REPORT
+    # ============================================================
+
+    wb_completed = load_workbook(live_buffer)
+
+    keep_tabs = [
+        "Weekly Summary Table",
+        "Performance by Area",
+        "Allergens Weekly Summary Table",
+        "Allergens Performance by Area",
+    ]
+
+    for sheet in wb_completed.sheetnames:
+        if sheet not in keep_tabs:
+            del wb_completed[sheet]
+
+    # Convert to values (safe for merged cells)
+    for ws in wb_completed.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if not isinstance(cell, MergedCell):
                     cell.value = cell.value
 
-        completed_buffer = io.BytesIO()
-        wb_completed.save(completed_buffer)
-        completed_buffer.seek(0)
+    completed_buffer = io.BytesIO()
+    wb_completed.save(completed_buffer)
+    completed_buffer.seek(0)
 
-        # ============================================================
-        # DOWNLOADS
-        # ============================================================
+    # ============================================================
+    # DOWNLOAD OUTPUTS
+    # ============================================================
 
-        st.success("Reports generated!")
+    st.success("Reports generated successfully!")
 
-        st.download_button(
-            "Download LIVE Report",
-            live_buffer,
-            file_name=f"Weekly Report format - {today} LIVE.xlsx"
-        )
+    st.download_button(
+        "Download LIVE Report",
+        live_buffer,
+        file_name=f"Weekly Report format - {today} LIVE.xlsx"
+    )
 
-        st.download_button(
-            "Download Completed Report",
-            completed_buffer,
-            file_name=f"Weekly Report format - {today}.xlsx"
-        )
+    st.download_button(
+        "Download Completed Report",
+        completed_buffer,
+        file_name=f"Weekly Report format - {today}.xlsx"
+    )
