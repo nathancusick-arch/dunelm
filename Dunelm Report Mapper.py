@@ -103,10 +103,10 @@ def append(ws, df):
         for c, val in enumerate(row, start=1):
             cell = ws.cell(r, c, val)
 
-            if c in [12, 13, 16]:
+            # ✅ Apply formatting ONLY (no conversion)
+            if c in [12, 13, 16]:  # Submitted, Approved, Visit
                 if pd.notna(val):
                     cell.number_format = "DD/MM/YYYY"
-                    cell.value = pd.to_datetime(val).to_pydatetime()
 
             if c == 17 and pd.notna(val):
                 cell.number_format = "HH:MM"
