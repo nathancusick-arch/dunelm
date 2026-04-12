@@ -18,7 +18,7 @@ csv_file = st.file_uploader("Upload audits_basic_data_export.csv", type=["csv"])
 live_file = st.file_uploader("Upload last week's LIVE report", type=["xlsx"])
 
 # ============================================================
-# MAPPING
+# COLUMN MAP (RESTORED LOGIC)
 # ============================================================
 
 COLUMN_MAP = {
@@ -52,20 +52,28 @@ COLUMN_MAP = {
 OUTPUT_COLUMNS = list(COLUMN_MAP.keys())
 
 def map_data(df):
+    def map_value(row, mapping):
+        if mapping is None:
+            return ""
+        return str(row.get(mapping, "")).strip()
+
     final_df = pd.DataFrame(columns=OUTPUT_COLUMNS)
 
     for col in OUTPUT_COLUMNS:
-        final_df[col] = df[COLUMN_MAP[col]] if COLUMN_MAP[col] else ""
+        final_df[col] = df.apply(lambda r: map_value(r, COLUMN_MAP[col]), axis=1)
 
-    # Types
-    final_df["Actual Visit Date"] = pd.to_datetime(final_df["Actual Visit Date"], errors="coerce")
-    final_df["Submitted Date"] = pd.to_datetime(final_df["Submitted Date"], errors="coerce")
-    final_df["Approved Date"] = pd.to_datetime(final_df["Approved Date"], errors="coerce")
-    final_df["Actual Visit Time"] = pd.to_datetime(final_df["Actual Visit Time"], errors="coerce").dt.time
+    # ✅ FIXED DATE HANDLING
+    for col in ["Actual Visit Date", "Submitted Date", "Approved Date"]:
+        final_df[col] = pd.to_datetime(final_df[col], errors="coerce", dayfirst=True)
+
+    final_df["Actual Visit Time"] = pd.to_datetime(
+        final_df["Actual Visit Time"], errors="coerce"
+    ).dt.time
+
     final_df["Extra Site 1"] = pd.to_numeric(final_df["Extra Site 1"], errors="coerce")
 
-    av = final_df[~final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])]
-    narv = final_df[final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])]
+    av = final_df[~final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
+    narv = final_df[final_df["Item to order"].isin(["Allergens", "Restaurant", "On the Go"])].copy()
 
     return av, narv
 
@@ -83,9 +91,27 @@ if csv_file and live_file:
 
     weekly = wb["Weekly"]
     narv_weekly = wb["NARV Weekly"]
+    ytd = wb["YTD"]
+    narv_ytd = wb["NARV YTD"]
 
     # ============================================================
-    # WRITE DATA
+    # DEDUPLICATION (FIXED)
+    # ============================================================
+
+    def get_ids(ws):
+        return {
+            str(r[2].value)
+            for r in ws.iter_rows(min_row=4, max_col=3)
+            if r[2].value
+        }
+
+    existing = get_ids(weekly) | get_ids(narv_weekly)
+
+    av_df = av_df[~av_df["Visit"].isin(existing)]
+    narv_df = narv_df[~narv_df["Visit"].isin(existing)]
+
+    # ============================================================
+    # WRITE FUNCTION
     # ============================================================
 
     def write(ws, df):
@@ -108,7 +134,20 @@ if csv_file and live_file:
     write(narv_weekly, narv_df)
 
     # ============================================================
-    # FORMULA TRIM + FILL (AA:AB)
+    # YTD (RESTORED)
+    # ============================================================
+
+    def append(ws, df):
+        start = ws.max_row + 1
+        for r, row in enumerate(df.itertuples(index=False), start=start):
+            for c, val in enumerate(row, start=1):
+                ws.cell(r, c, val)
+
+    append(ytd, av_df)
+    append(narv_ytd, narv_df)
+
+    # ============================================================
+    # FORMULAS (AA:AB FIXED)
     # ============================================================
 
     def fix_formulas(ws):
@@ -118,34 +157,29 @@ if csv_file and live_file:
             col_letter = ws.cell(row=4, column=col).column_letter
             base = ws[f"{col_letter}4"].value
 
-            # Clear EVERYTHING below
-            for r in range(5, 1000):
+            # clear
+            for r in range(5, ws.max_row + 200):
                 ws[f"{col_letter}{r}"] = None
 
-            # Refill only to data length
+            # fill only needed rows
             for r in range(5, last_row + 1):
-                ws[f"{col_letter}{r}"] = Translator(
-                    base,
-                    origin=f"{col_letter}4"
-                ).translate_formula(f"{col_letter}{r}")
+                ws[f"{col_letter}{r}"] = Translator(base, origin=f"{col_letter}4").translate_formula(f"{col_letter}{r}")
 
-    fix_formulas(weekly)
-    fix_formulas(narv_weekly)
+    for ws in [weekly, narv_weekly, ytd, narv_ytd]:
+        fix_formulas(ws)
 
     # ============================================================
-    # SUMMARY TABLE FIX
+    # SUMMARY TABLES (FIXED LENGTH)
     # ============================================================
 
     def fix_summary(ws, start_row, data_ws):
         base_row = start_row + 1
         data_len = data_ws.max_row - 3
 
-        base = [
-            ws.cell(base_row, c).value
-            for c in range(1, ws.max_column + 1)
-        ]
+        base = [ws.cell(base_row, c).value for c in range(1, ws.max_column + 1)]
 
-        for r in range(base_row, base_row + 1000):
+        # clear only required range
+        for r in range(base_row, base_row + data_len + 5):
             for c in range(1, ws.max_column + 1):
                 ws.cell(r, c).value = None
 
@@ -172,10 +206,9 @@ if csv_file and live_file:
     live_buffer.seek(0)
 
     # ============================================================
-    # COMPLETED REPORT (FIXED APPROACH)
+    # COMPLETED REPORT (NO DATA LOSS)
     # ============================================================
 
-    wb_values = load_workbook(live_buffer, data_only=True)
     wb_completed = load_workbook(live_buffer)
 
     keep = [
@@ -185,37 +218,20 @@ if csv_file and live_file:
         " Allergens Performance by Area"
     ]
 
-    # Remove unwanted sheets
     for sheet in list(wb_completed.sheetnames):
         if sheet not in keep:
             del wb_completed[sheet]
-
-    # Replace formulas with values
-    for ws in wb_completed.worksheets:
-        ws_val = wb_values[ws.title]
-
-        for r in range(1, ws.max_row + 1):
-            for c in range(1, ws.max_column + 1):
-                cell = ws.cell(r, c)
-                if not isinstance(cell, MergedCell):
-                    cell.value = ws_val.cell(r, c).value
 
     completed_buffer = io.BytesIO()
     wb_completed.save(completed_buffer)
     completed_buffer.seek(0)
 
     # ============================================================
-    # DOWNLOADS
+    # DOWNLOAD
     # ============================================================
 
-    st.download_button(
-        "Download LIVE Report",
-        live_buffer,
-        file_name=f"Weekly Report format - {today} LIVE.xlsx"
-    )
+    st.download_button("Download LIVE Report", live_buffer,
+                       file_name=f"Weekly Report format - {today} LIVE.xlsx")
 
-    st.download_button(
-        "Download Completed Report",
-        completed_buffer,
-        file_name=f"Weekly Report format - {today}.xlsx"
-    )
+    st.download_button("Download Completed Report", completed_buffer,
+                       file_name=f"Weekly Report format - {today}.xlsx")
