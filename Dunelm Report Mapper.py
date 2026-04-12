@@ -89,7 +89,7 @@ def write(ws, df):
         for c, val in enumerate(row, start=1):
             cell = ws.cell(r, c, val)
 
-            if c in [12, 13, 16]:
+            if c in [13, 14, 16]:
                 if pd.notna(val):
                     cell.number_format = "DD/MM/YYYY"
 
@@ -104,7 +104,7 @@ def append(ws, df):
             cell = ws.cell(r, c, val)
 
             # ✅ Apply formatting ONLY (no conversion)
-            if c in [12, 13, 16]:  # Submitted, Approved, Visit
+            if c in [13, 14, 16]:  # Submitted, Approved, Visit
                 if pd.notna(val):
                     cell.number_format = "DD/MM/YYYY"
 
@@ -126,25 +126,32 @@ def fix_formulas(ws):
                 base, origin=f"{col_letter}4"
             ).translate_formula(f"{col_letter}{r}")
 
+from copy import copy
+
 def fix_summary(ws, start_row, data_ws):
     base_row = start_row + 1
     data_len = get_last_data_row(data_ws) - 3
 
-    template = [
-        {
-            "value": ws.cell(base_row, c).value,
-            "font": copy(ws.cell(base_row, c).font),
-            "fill": copy(ws.cell(base_row, c).fill),
-            "border": copy(ws.cell(base_row, c).border),
-            "number_format": ws.cell(base_row, c).number_format
-        }
-        for c in range(1, ws.max_column + 1)
-    ]
+    # Capture template (FULL style)
+    template = []
+    for c in range(1, ws.max_column + 1):
+        cell = ws.cell(base_row, c)
+        template.append({
+            "value": cell.value,
+            "font": copy(cell.font),
+            "fill": copy(cell.fill),
+            "border": copy(cell.border),
+            "alignment": copy(cell.alignment),
+            "number_format": cell.number_format
+        })
 
-    for r in range(base_row, ws.max_row + 1):
+    # 🔴 HARD CLEAR EVERYTHING BELOW HEADER
+    max_clear = ws.max_row + 200
+    for r in range(base_row, max_clear):
         for c in range(1, ws.max_column + 1):
             ws.cell(r, c).value = None
 
+    # 🔁 REBUILD EXACT LENGTH
     for i in range(data_len):
         for c, t in enumerate(template, start=1):
             if t["value"]:
@@ -158,7 +165,13 @@ def fix_summary(ws, start_row, data_ws):
                 cell.font = t["font"]
                 cell.fill = t["fill"]
                 cell.border = t["border"]
+                cell.alignment = t["alignment"]
                 cell.number_format = t["number_format"]
+
+    # ✂️ HARD TRIM BELOW DATA
+    final_row = base_row + data_len - 1
+    if ws.max_row > final_row:
+        ws.delete_rows(final_row + 1, ws.max_row - final_row)
 
 def trim_sheet(ws):
     last_row = get_last_data_row(ws)
