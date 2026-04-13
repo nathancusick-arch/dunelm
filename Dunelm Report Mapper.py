@@ -261,9 +261,12 @@ if csv_file and live_file:
     narv_ytd_df = extract(narv_ytd)
 
     def summary(df):
-        total = len(df)
-        p = (df["Result"] == "pass").sum()
-        f = (df["Result"] == "fail").sum()
+        valid = df[df["Result"].isin(["pass", "fail"])]
+
+        total = len(valid)
+        p = (valid["Result"] == "pass").sum()
+        f = (valid["Result"] == "fail").sum()
+
         return p, f, total, (p/total if total else 0), (f/total if total else 0)
 
     wp, wf, wt, wpct, wfct = summary(weekly_df)
