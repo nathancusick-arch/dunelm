@@ -214,7 +214,7 @@ if csv_file and live_file:
     live_buffer.seek(0)
 
     # ============================================================
-    # COMPLETED REPORT (UPDATED ONLY SECTION)
+    # COMPLETED REPORT (ONLY CHANGED SECTION)
     # ============================================================
 
     wb_completed = load_workbook(live_buffer)
@@ -230,9 +230,8 @@ if csv_file and live_file:
 
     lookup = {}
     for row in regions.iter_rows(min_row=2):
-        code = row[0].value
-        if code:
-            lookup[str(code)] = (row[1].value, row[2].value, row[3].value)
+        if row[0].value:
+            lookup[str(row[0].value)] = (row[1].value, row[2].value, row[3].value)
 
     def extract(ws):
         data = []
@@ -240,36 +239,92 @@ if csv_file and live_file:
             code = ws.cell(r, 22).value
             if not code:
                 continue
-            code = str(code)
-            name, am, pot = lookup.get(code, (None, None, None))
-            data.append([code, name, pot, am,
-                         ws.cell(r, 15).value,
-                         ws.cell(r, 16).value,
-                         ws.cell(r, 19).value])
-        return pd.DataFrame(data, columns=["Code","Name","Pot","AM","Product","Date","Result"])
+
+            code = int(code)
+            name, am, pot = lookup.get(str(code), (None, None, None))
+
+            data.append({
+                "Code": code,
+                "Name": name,
+                "Pot": pot,
+                "AM": am,
+                "Product": ws.cell(r, 15).value,
+                "Date": ws.cell(r, 16).value,
+                "Result": str(ws.cell(r, 19).value).lower()
+            })
+
+        return pd.DataFrame(data)
 
     weekly_df = extract(weekly)
     narv_df = extract(narv_weekly)
+    ytd_df = extract(ytd)
+    narv_ytd_df = extract(narv_ytd)
 
     def summary(df):
         total = len(df)
-        p = (df["Result"]=="pass").sum()
-        f = (df["Result"]=="fail").sum()
-        return p, f, total
+        p = (df["Result"] == "pass").sum()
+        f = (df["Result"] == "fail").sum()
+        return p, f, total, (p/total if total else 0), (f/total if total else 0)
 
-    p,f,t = summary(weekly_df)
-    ws_summary["B6"], ws_summary["B7"], ws_summary["B9"] = p,f,t
+    wp, wf, wt, wpct, wfct = summary(weekly_df)
+    yp, yf, yt, ypct, yfct = summary(ytd_df)
 
-    p,f,t = summary(narv_df)
-    ws_narv_summary["B6"], ws_narv_summary["B7"], ws_narv_summary["B9"] = p,f,t
+    ws_summary["B6"], ws_summary["C6"] = wp, wpct
+    ws_summary["B7"], ws_summary["C7"] = wf, wfct
+    ws_summary["B9"] = wt
 
-    for i,row in weekly_df.iterrows():
-        for c,val in enumerate(row,1):
-            ws_summary.cell(22+i,c,val)
+    ws_summary["D6"], ws_summary["E6"] = yp, ypct
+    ws_summary["D7"], ws_summary["E7"] = yf, yfct
+    ws_summary["D9"] = yt
 
-    for i,row in narv_df.iterrows():
-        for c,val in enumerate(row,1):
-            ws_narv_summary.cell(17+i,c,val)
+    products = ["Knife", "Knife - No ID", "Click & Collect"]
+
+    def product_stats(df, product):
+        sub = df[df["Product"] == product]
+        total = len(sub)
+        p = (sub["Result"] == "pass").sum()
+        return total, (p/total if total else None)
+
+    for i, prod in enumerate(products, start=14):
+        total, pct = product_stats(weekly_df, prod)
+        ws_summary[f"B{i}"] = total
+        ws_summary[f"C{i}"] = pct if pct is not None else "-"
+
+        total, pct = product_stats(ytd_df, prod)
+        ws_summary[f"D{i}"] = total
+        ws_summary[f"E{i}"] = pct if pct is not None else "-"
+
+    ws_summary["B18"] = sum(ws_summary[f"B{i}"].value or 0 for i in range(14,17))
+    ws_summary["D18"] = sum(ws_summary[f"D{i}"].value or 0 for i in range(14,17))
+
+    wp, wf, wt, wpct, wfct = summary(narv_df)
+    yp, yf, yt, ypct, yfct = summary(narv_ytd_df)
+
+    ws_narv_summary["B6"], ws_narv_summary["C6"] = wp, wpct
+    ws_narv_summary["B7"], ws_narv_summary["C7"] = wf, wfct
+    ws_narv_summary["B9"] = wt
+
+    ws_narv_summary["D6"], ws_narv_summary["E6"] = yp, ypct
+    ws_narv_summary["D7"], ws_narv_summary["E7"] = yf, yfct
+    ws_narv_summary["D9"] = yt
+
+    restaurant = narv_df[narv_df["Product"] == "Restaurant"]
+    if len(restaurant):
+        ws_narv_summary["B13"] = (restaurant["Result"] == "pass").sum() / len(restaurant)
+
+    def write_table(ws, df, start_row):
+        for i, row in df.iterrows():
+            r = start_row + i
+            ws.cell(r, 1, row["Code"])
+            ws.cell(r, 2, row["Name"])
+            ws.cell(r, 3, row["Pot"])
+            ws.cell(r, 4, row["AM"])
+            ws.cell(r, 5, row["Product"])
+            ws.cell(r, 6, row["Date"])
+            ws.cell(r, 7, row["Result"])
+
+    write_table(ws_summary, weekly_df, 22)
+    write_table(ws_narv_summary, narv_df, 17)
 
     keep = [
         "Weekly Summary Table",
