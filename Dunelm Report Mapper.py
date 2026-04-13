@@ -214,7 +214,7 @@ if csv_file and live_file:
     live_buffer.seek(0)
 
     # ============================================================
-    # COMPLETED REPORT (ONLY CHANGED SECTION)
+    # COMPLETED REPORT
     # ============================================================
 
     wb_completed = load_workbook(live_buffer)
@@ -227,6 +227,8 @@ if csv_file and live_file:
 
     ws_summary = wb_completed["Weekly Summary Table"]
     ws_narv_summary = wb_completed["Allergens Weekly Summary Table"]
+    ws_area = wb_completed[" Performance by Area"]
+    ws_narv_area = wb_completed[" Allergens Performance by Area"]
 
     lookup = {}
     for row in regions.iter_rows(min_row=2):
@@ -262,11 +264,9 @@ if csv_file and live_file:
 
     def summary(df):
         valid = df[df["Result"].isin(["pass", "fail"])]
-
         total = len(valid)
         p = (valid["Result"] == "pass").sum()
         f = (valid["Result"] == "fail").sum()
-
         return p, f, total, (p/total if total else 0), (f/total if total else 0)
 
     wp, wf, wt, wpct, wfct = summary(weekly_df)
@@ -333,6 +333,70 @@ if csv_file and live_file:
 
     write_table(ws_summary, weekly_df, 22)
     write_table(ws_narv_summary, narv_df, 17)
+
+    # ============================================================
+    # PERFORMANCE BY AREA (ADDED)
+    # ============================================================
+
+    def area_table(ws, weekly_df, ytd_df):
+        start_row = 8
+
+        ams = []
+        r = start_row
+        while ws.cell(r, 1).value:
+            ams.append(ws.cell(r, 1).value)
+            r += 1
+
+        for i, am in enumerate(ams):
+            row = start_row + i
+
+            w = weekly_df[weekly_df["AM"] == am]
+            valid_w = w[w["Result"].isin(["pass", "fail"])]
+
+            comp = len(valid_w)
+            fail = (valid_w["Result"] == "fail").sum()
+            pas = (valid_w["Result"] == "pass").sum()
+
+            ws[f"B{row}"] = comp
+            ws[f"C{row}"] = fail
+            ws[f"D{row}"] = pas
+            ws[f"E{row}"] = (pas / comp) if comp else "-"
+
+            y = ytd_df[ytd_df["AM"] == am]
+            valid_y = y[y["Result"].isin(["pass", "fail"])]
+
+            comp = len(valid_y)
+            fail = (valid_y["Result"] == "fail").sum()
+            pas = (valid_y["Result"] == "pass").sum()
+
+            ws[f"G{row}"] = comp
+            ws[f"H{row}"] = fail
+            ws[f"I{row}"] = pas
+            ws[f"J{row}"] = (pas / comp) if comp else "-"
+
+        total_row = start_row + len(ams) + 1
+
+        weekly_valid = weekly_df[weekly_df["Result"].isin(["pass", "fail"])]
+        ytd_valid = ytd_df[ytd_df["Result"].isin(["pass", "fail"])]
+
+        ws[f"B{total_row}"] = len(weekly_valid)
+        ws[f"C{total_row}"] = (weekly_valid["Result"] == "fail").sum()
+        ws[f"D{total_row}"] = (weekly_valid["Result"] == "pass").sum()
+        ws[f"E{total_row}"] = (
+            (weekly_valid["Result"] == "pass").sum() / len(weekly_valid)
+            if len(weekly_valid) else "-"
+        )
+
+        ws[f"G{total_row}"] = len(ytd_valid)
+        ws[f"H{total_row}"] = (ytd_valid["Result"] == "fail").sum()
+        ws[f"I{total_row}"] = (ytd_valid["Result"] == "pass").sum()
+        ws[f"J{total_row}"] = (
+            (ytd_valid["Result"] == "pass").sum() / len(ytd_valid)
+            if len(ytd_valid) else "-"
+        )
+
+    area_table(ws_area, weekly_df, ytd_df)
+    area_table(ws_narv_area, narv_df, narv_ytd_df)
 
     keep = [
         "Weekly Summary Table",
