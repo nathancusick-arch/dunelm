@@ -448,5 +448,5 @@ if csv_file and live_file:
         f"I hope you find the attached useful."
     )
 
-    st.markdown("##### Email Text")
+    st.markdown("###### Email Text")
     st.code(email_text, language="text")
