@@ -103,8 +103,7 @@ def append(ws, df):
         for c, val in enumerate(row, start=1):
             cell = ws.cell(r, c, val)
 
-            # ✅ Apply formatting ONLY (no conversion)
-            if c in [13, 14, 16]:  # Submitted, Approved, Visit
+            if c in [13, 14, 16]:
                 if pd.notna(val):
                     cell.number_format = "DD/MM/YYYY"
 
@@ -126,13 +125,10 @@ def fix_formulas(ws):
                 base, origin=f"{col_letter}4"
             ).translate_formula(f"{col_letter}{r}")
 
-from copy import copy
-
 def fix_summary(ws, start_row, data_ws):
     base_row = start_row + 1
     data_len = get_last_data_row(data_ws) - 3
 
-    # Capture template (FULL style)
     template = []
     for c in range(1, ws.max_column + 1):
         cell = ws.cell(base_row, c)
@@ -145,13 +141,11 @@ def fix_summary(ws, start_row, data_ws):
             "number_format": cell.number_format
         })
 
-    # 🔴 HARD CLEAR EVERYTHING BELOW HEADER
     max_clear = ws.max_row + 200
     for r in range(base_row, max_clear):
         for c in range(1, ws.max_column + 1):
             ws.cell(r, c).value = None
 
-    # 🔁 REBUILD EXACT LENGTH
     for i in range(data_len):
         for c, t in enumerate(template, start=1):
             if t["value"]:
@@ -161,14 +155,12 @@ def fix_summary(ws, start_row, data_ws):
                     Translator(t["value"], origin=f"A{base_row}")
                     .translate_formula(f"A{base_row+i}")
                 )
-
                 cell.font = t["font"]
                 cell.fill = t["fill"]
                 cell.border = t["border"]
                 cell.alignment = t["alignment"]
                 cell.number_format = t["number_format"]
 
-    # ✂️ HARD TRIM BELOW DATA
     final_row = base_row + data_len - 1
     if ws.max_row > final_row:
         ws.delete_rows(final_row + 1, ws.max_row - final_row)
@@ -221,8 +213,63 @@ if csv_file and live_file:
     wb.save(live_buffer)
     live_buffer.seek(0)
 
-    # (completed logic unchanged)
+    # ============================================================
+    # COMPLETED REPORT (UPDATED ONLY SECTION)
+    # ============================================================
+
     wb_completed = load_workbook(live_buffer)
+
+    weekly = wb_completed["Weekly"]
+    narv_weekly = wb_completed["NARV Weekly"]
+    regions = wb_completed["Regions"]
+    ytd = wb_completed["YTD"]
+    narv_ytd = wb_completed["NARV YTD"]
+
+    ws_summary = wb_completed["Weekly Summary Table"]
+    ws_narv_summary = wb_completed["Allergens Weekly Summary Table"]
+
+    lookup = {}
+    for row in regions.iter_rows(min_row=2):
+        code = row[0].value
+        if code:
+            lookup[str(code)] = (row[1].value, row[2].value, row[3].value)
+
+    def extract(ws):
+        data = []
+        for r in range(4, ws.max_row + 1):
+            code = ws.cell(r, 22).value
+            if not code:
+                continue
+            code = str(code)
+            name, am, pot = lookup.get(code, (None, None, None))
+            data.append([code, name, pot, am,
+                         ws.cell(r, 15).value,
+                         ws.cell(r, 16).value,
+                         ws.cell(r, 19).value])
+        return pd.DataFrame(data, columns=["Code","Name","Pot","AM","Product","Date","Result"])
+
+    weekly_df = extract(weekly)
+    narv_df = extract(narv_weekly)
+
+    def summary(df):
+        total = len(df)
+        p = (df["Result"]=="pass").sum()
+        f = (df["Result"]=="fail").sum()
+        return p, f, total
+
+    p,f,t = summary(weekly_df)
+    ws_summary["B6"], ws_summary["B7"], ws_summary["B9"] = p,f,t
+
+    p,f,t = summary(narv_df)
+    ws_narv_summary["B6"], ws_narv_summary["B7"], ws_narv_summary["B9"] = p,f,t
+
+    for i,row in weekly_df.iterrows():
+        for c,val in enumerate(row,1):
+            ws_summary.cell(22+i,c,val)
+
+    for i,row in narv_df.iterrows():
+        for c,val in enumerate(row,1):
+            ws_narv_summary.cell(17+i,c,val)
 
     keep = [
         "Weekly Summary Table",
