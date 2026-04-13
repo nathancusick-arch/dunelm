@@ -339,7 +339,7 @@ if csv_file and live_file:
     write_table(ws_narv_summary, narv_df, 17)
 
     # ============================================================
-    # PERFORMANCE BY AREA (ADDED)
+    # PERFORMANCE BY AREA
     # ============================================================
 
     def area_table(ws, weekly_df, ytd_df):
@@ -425,3 +425,26 @@ if csv_file and live_file:
 
     st.download_button("Download Completed Report", completed_buffer,
                        file_name=f"Weekly Report format - {today}.xlsx")
+
+    # ============================================================
+    # EMAIL TEXT
+    # ============================================================
+
+    # AV (Weekly)
+    av_pass_rate = f"{round(wpct * 100)}%"
+    av_completed = wt
+
+    # Allergens (Weekly)
+    narv_p, narv_f, narv_total, narv_pct, _ = summary(narv_df)
+    narv_pass_rate = f"{round(narv_pct * 100)}%"
+    narv_completed = narv_total
+
+    email_text = f"""All,
+    
+    Please find attached the Serve Legal weekly report. As you’ll see, the age-verification pass rate was {av_pass_rate} based on {av_completed} completed audits, and the allergens pass rate was {narv_pass_rate} based on {narv_completed} completed audits.
+    
+    I hope you find the attached useful.
+    """
+
+    st.markdown("### Email Text")
+    st.code(email_text, language="text")
