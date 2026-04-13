@@ -10,9 +10,13 @@ from datetime import datetime
 st.title("Dunelm Report Generator")
 
 st.write("""
-1. Upload the latest audits export file  
-2. Upload last week's LIVE report  
-3. Download this week's LIVE and completed reports  
+Upload:
+1. Latest audits export
+2. Last week's LIVE report
+
+The tool will automatically generate:
+- This week's LIVE report
+- This week's completed report
 """)
 
 csv_file = st.file_uploader("Upload audits_basic_data_export.csv", type=["csv"])
@@ -410,8 +414,11 @@ if csv_file and live_file:
             del wb_completed[sheet]
 
     completed_buffer = io.BytesIO()
+    wb_completed.active = wb_completed.sheetnames.index("Weekly Summary Table")
     wb_completed.save(completed_buffer)
     completed_buffer.seek(0)
+
+    st.success("Reports generated successfully!")
 
     st.download_button("Download LIVE Report", live_buffer,
                        file_name=f"Weekly Report format - {today} LIVE.xlsx")
