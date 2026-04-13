@@ -312,8 +312,12 @@ if csv_file and live_file:
     ws_narv_summary["D9"] = yt
 
     restaurant = narv_df[narv_df["Product"] == "Restaurant"]
-    if len(restaurant):
-        ws_narv_summary["B13"] = (restaurant["Result"] == "pass").sum() / len(restaurant)
+    valid = restaurant[restaurant["Result"].isin(["pass", "fail"])]
+
+    if len(valid):
+        ws_narv_summary["B13"] = (valid["Result"] == "pass").sum() / len(valid)
+    else:
+        ws_narv_summary["B13"] = "-"
 
     def write_table(ws, df, start_row):
         for i, row in df.iterrows():
