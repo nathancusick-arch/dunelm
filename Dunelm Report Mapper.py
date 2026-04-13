@@ -284,8 +284,9 @@ if csv_file and live_file:
 
     def product_stats(df, product):
         sub = df[df["Product"] == product]
-        total = len(sub)
-        p = (sub["Result"] == "pass").sum()
+        valid = sub[sub["Result"].isin(["pass", "fail"])]
+        total = len(valid)
+        p = (valid["Result"] == "pass").sum()
         return total, (p/total if total else None)
 
     for i, prod in enumerate(products, start=14):
