@@ -440,11 +440,10 @@ if csv_file and live_file:
     narv_completed = narv_total
 
     email_text = f"""All,
-    
-    Please find attached the Serve Legal weekly report. As you’ll see, the age-verification pass rate was {av_pass_rate} based on {av_completed} completed audits, and the allergens pass rate was {narv_pass_rate} based on {narv_completed} completed audits.
-    
-    I hope you find the attached useful.
-    """
+
+Please find attached the Serve Legal weekly report. As you’ll see, the age-verification pass rate was {av_pass_rate} based on {av_completed} completed audits, and the allergens pass rate was {narv_pass_rate} based on {narv_completed} completed audits.
+
+I hope you find the attached useful."""
 
     st.markdown("### Email Text")
     st.code(email_text, language="text")
