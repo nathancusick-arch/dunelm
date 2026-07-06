@@ -259,7 +259,18 @@ if csv_file and live_file:
                 "Result": str(ws.cell(r, 19).value).lower()
             })
 
-        return pd.DataFrame(data)
+        return pd.DataFrame(
+            data,
+            columns=[
+                "Code",
+                "Name",
+                "Pot",
+                "AM",
+                "Product",
+                "Date",
+                "Result",
+            ],
+        )
 
     weekly_df = extract(weekly)
     narv_df = extract(narv_weekly)
